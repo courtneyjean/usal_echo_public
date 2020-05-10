@@ -41,4 +41,14 @@ def clean_dcm_meta():
     meta_lite = metadata[metadata["tags"].isin(dicom_tags.values())]
 
     io_clean.save_to_db(meta_lite, "meta_lite")
+    
+        #create a colour scheme lookup
+    #Create a colour scheme lookup for filenames
+    colour_scheme_lookup =  meta_lite[(meta_lite['tag1'] == '0028') & (meta_lite['tag2'] == '0004')].copy()
+    colour_scheme_lookup =  colour_scheme_lookup.drop_duplicates()
+    colour_scheme_lookup =  colour_scheme_lookup.drop_duplicates(subset='filename', keep='first')
+    colour_scheme_lookup =  colour_scheme_lookup.rename(columns={'value':'colour_scheme'})
+    
+    io_clean.save_to_db(colour_scheme_lookup, "colour_scheme_lookup")
+    
     logger.info("Metadata filtered.")
