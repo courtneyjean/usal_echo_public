@@ -256,7 +256,7 @@ def filter_by_views():
     inst_3 = df_ultra_color_filt["instanceidk"].tolist()
 
     # Get instances that passed all filtering steps
-    inst_final = list(set(inst_1) & set(inst_2) & set(inst_3))
+    inst_final = list(set().union(inst_1, inst_2, inst_3))
 
     # Filter out instances that do not meet the dicom metadata criteria
     df = df_inst_all
