@@ -15,15 +15,21 @@ import numpy as np
 import tensorflow as tf
 from PIL import Image
 from scipy.misc import imresize
-import datetime
 import hashlib
+import datetime
+
+from usal_echo import (
+    model_dir,
+    a4c_segmentation_model,
+    a2c_segmentation_model
+)
 
 from usal_echo.d00_utils.log_utils import setup_logging
 from usal_echo.d02_intermediate.download_dcm import dcm_to_segmentation_arrays
 from usal_echo.d00_utils.db_utils import (
+    dbReadWriteClean,
     dbReadWriteViews,
-    dbReadWriteClassification,
-    dbReadWriteSegmentation,
+    dbReadWriteSegmentation
 )
 from usal_echo.d03_classification.evaluate_views import _groundtruth_views
 from usal_echo.d04_segmentation.model_unet import Unet
@@ -34,7 +40,7 @@ logger = setup_logging(__name__, __name__)
 os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 
-def segmentChamber(videofile, dicomdir, view, model_path):
+def segmentChamber(videofile, dicomdir, view, model_path, seg_model, colour_scheme_lookup):
     """
     
     """
@@ -56,7 +62,7 @@ def segmentChamber(videofile, dicomdir, view, model_path):
         with g_1.as_default():
             saver = tf.train.Saver()
             saver.restore(
-                sess1, os.path.join(modeldir, "a4c_45_20_all_model.ckpt-9000")
+                sess1, os.path.join(modeldir, seg_model)
             )
     elif view == "a2c":
         g_2 = tf.Graph()
@@ -70,37 +76,47 @@ def segmentChamber(videofile, dicomdir, view, model_path):
         with g_2.as_default():
             saver = tf.train.Saver()
             saver.restore(
-                sess2, os.path.join(modeldir, "a2c_45_20_all_model.ckpt-10600")
+                sess2, os.path.join(modeldir, seg_model)
             )
 
     outpath = "/home/ubuntu/data/04_segmentation/" + view + "/"
     if not os.path.exists(outpath):
         os.makedirs(outpath)
+        
+    #look up colour scheme
+    match_filename = 'a_' + str(videofile).split('_')[2].split('.')[0]
+    instance_colour_scheme = colour_scheme_lookup[colour_scheme_lookup['filename'] == match_filename]['colour_scheme'].item()
 
-    images, orig_images = dcm_to_segmentation_arrays(dicomdir, videofile)
+    images, orig_images = dcm_to_segmentation_arrays(dicomdir, videofile, instance_colour_scheme)
     np_arrays_x3 = []
     images_uuid_x3 = []
+    np_in_min = images.min()
+    np_in_max = images.max()
+    
 
     if view == "a4c":
+        logger.info('predicitng a4c view')
         a4c_lv_segs, a4c_la_segs, a4c_lvo_segs, preds = extract_segs(
             images, orig_images, model, sess, 2, 4, 1
         )
+        np_total = np.sum(a4c_lv_segs) + np.sum(a4c_la_segs) + np.sum(a4c_lvo_segs)
         np_arrays_x3.append(np.array(a4c_lv_segs).astype("uint8"))
         np_arrays_x3.append(np.array(a4c_la_segs).astype("uint8"))
         np_arrays_x3.append(np.array(a4c_lvo_segs).astype("uint8"))
         number_frames = (np.array(a4c_lvo_segs).astype("uint8").shape)[0]
-        model_name = "a4c_45_20_all_model.ckpt-9000"
-    elif view == "a2c":
+        model_name = a4c_segmentation_model        
+    if view == "a2c":
+        logger.info('predicitng a2c view')
         a2c_lv_segs, a2c_la_segs, a2c_lvo_segs, preds = extract_segs(
             images, orig_images, model, sess, 2, 3, 1
         )
+        np_total = np.sum(a2c_lv_segs) + np.sum(a2c_la_segs) + np.sum(a2c_lvo_segs)
         np_arrays_x3.append(np.array(a2c_lv_segs).astype("uint8"))
         np_arrays_x3.append(np.array(a2c_la_segs).astype("uint8"))
         np_arrays_x3.append(np.array(a2c_lvo_segs).astype("uint8"))
         number_frames = (np.array(a2c_lvo_segs).astype("uint8").shape)[0]
-        model_name = "a2c_45_20_all_model.ckpt-10600"
-
-    j = 0
+        model_name = a2c_segmentation_model
+    j = 0    
     nrow = orig_images[0].shape[0]
     ncol = orig_images[0].shape[1]
     plt.figure(figsize=(5, 5))
@@ -142,11 +158,13 @@ def segmentChamber(videofile, dicomdir, view, model_path):
             (outpath + "/" + videofile + "_" + str(j) + "_" + "overlay.png").encode()
         ).hexdigest()
     )
+    
+    return [number_frames, model_name, np_arrays_x3, images_uuid_x3, np_in_min, np_in_max, np_total]
 
-    return [number_frames, model_name, np_arrays_x3, images_uuid_x3]
 
 
-def segmentstudy(viewlist_a2c, viewlist_a4c, dcm_path, model_path):
+def segmentstudy(viewlist_a2c, viewlist_a4c, dcm_path, model_path, 
+                 a4c_seg_model, a2c_seg_model):
 
     # set up for writing to segmentation schema
     io_views = dbReadWriteViews()
@@ -165,17 +183,25 @@ def segmentstudy(viewlist_a2c, viewlist_a4c, dcm_path, model_path):
         "output_image_seg",
         "output_image_orig",
         "output_image_overlay",
-    ]
+        "min_pixel_intensity",
+        "max_pixel_intensity",
+        "np_prediction_total"
+        ]
 
     instances_unique_master_list = io_views.get_table("instances_unique_master_list")
     # below cleans the filename field to remove whitespace
     instances_unique_master_list["instancefilename"] = instances_unique_master_list[
         "instancefilename"
     ].apply(lambda x: str(x).strip())
+    
+    #below gets the colour scheme lookup
+    #Get colour_scheme_lookup_table
+    io_clean = dbReadWriteClean()
+    colour_scheme_lookup = io_clean.get_table('colour_scheme_lookup')
 
     for video in viewlist_a4c:
-        [number_frames, model_name, np_arrays_x3, images_uuid_x3] = segmentChamber(
-            video, dcm_path, "a4c", model_path
+        [number_frames, model_name, np_arrays_x3, images_uuid_x3, np_in_min, np_in_max, np_pred_total] = segmentChamber(
+            video, dcm_path, "a4c", model_path, a4c_seg_model, colour_scheme_lookup
         )
         instancefilename = video.split("_")[2].split(".")[
             0
@@ -188,9 +214,7 @@ def segmentstudy(viewlist_a2c, viewlist_a4c, dcm_path, model_path):
         ]
         df = df.reset_index()
         instance_id = df.at[0, "instanceidk"]
-        # Columns names are:prediction_id	study_id	instance_id	file_name
-        # num_frames	model_name	date_run	output_np_lv	output_np_la
-        # output_np_lvo	output_image_seg	output_image_orig	output_image_overlay
+        
         d = [
             studyidk,
             instance_id,
@@ -204,12 +228,16 @@ def segmentstudy(viewlist_a2c, viewlist_a4c, dcm_path, model_path):
             images_uuid_x3[0],
             images_uuid_x3[1],
             images_uuid_x3[2],
-        ]
+            np_in_min, 
+            np_in_max,
+            np_pred_total
+            ]
         io_segmentation.save_prediction_numpy_array_to_db(d, column_names)
+        logger.info('Saved an a4c predition')
 
     for video in viewlist_a2c:
-        [number_frames, model_name, np_arrays_x3, images_uuid_x3] = segmentChamber(
-            video, dcm_path, "a2c", model_path
+        [number_frames, model_name, np_arrays_x3, images_uuid_x3, np_in_min, np_in_max, np_pred_total] = segmentChamber(
+            video, dcm_path, "a2c", model_path, a2c_seg_model, colour_scheme_lookup
         )
         instancefilename = video.split("_")[2].split(".")[
             0
@@ -235,9 +263,14 @@ def segmentstudy(viewlist_a2c, viewlist_a4c, dcm_path, model_path):
             images_uuid_x3[0],
             images_uuid_x3[1],
             images_uuid_x3[2],
-        ]
+            np_in_min, 
+            np_in_max,
+            np_pred_total
+            ]
+            
         io_segmentation.save_prediction_numpy_array_to_db(d, column_names)
-
+        logger.info('Saved an a2c predition')
+    
     return 1
 
 
@@ -278,6 +311,7 @@ def run_segment(
     model_path,
     img_dir,
     classification_model_name,
+    a4c_seg_model, a2c_seg_model,
     date_run=datetime.date.today(),
 ):
 
@@ -326,7 +360,7 @@ def run_segment(
     viewlist_a2c = viewlist_a2c.to_list()
     logger.info("{} a2c files added to the view list".format(len(viewlist_a2c)))
 
-    segmentstudy(viewlist_a2c, viewlist_a4c, dcm_path, model_path)
+    segmentstudy(viewlist_a2c, viewlist_a4c, dcm_path, model_path, a4c_seg_model, a2c_seg_model)
     end = time.time()
     viewlist = viewlist_a2c + viewlist_a4c
     logger.info(
