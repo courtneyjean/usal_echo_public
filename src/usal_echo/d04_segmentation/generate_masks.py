@@ -38,24 +38,26 @@ def generate_masks(dcm_path):
         "view_name",
         "numpy_array",
     ]
+    counter = 0
 
     for index, mask in masks_df.iterrows():
         resized_mask = imresize(mask["mask"], (384, 384))
-        d = [
-            int(mask["studyidk"]),
-            mask["instanceidk"],
-            mask["instancefilename"],
-            int(mask["frame"]),
-            mask["chamber"],
-            mask["view"],
-            resized_mask,
-        ]
-
-        io_segmentation.save_ground_truth_numpy_array_to_db(d, gt_table_column_names)
+        if resized_mask.sum != 0: #removes blank masks from ground_truths
+            d = [
+                int(mask["studyidk"]),
+                mask["instanceidk"],
+                mask["instancefilename"],
+                int(mask["frame"]),
+                mask["chamber"],
+                mask["view"],
+                resized_mask,
+            ]
+            io_segmentation.save_ground_truth_numpy_array_to_db(d, gt_table_column_names)
+            counter = counter + 1
 
     logger.info(
         "{} ground truth masks written to the segmentation.ground_truths table".format(
-            masks_df.shape[0]
+            counter
         )
     )
 
