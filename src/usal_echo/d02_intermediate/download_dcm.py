@@ -6,10 +6,10 @@ import os
 import numpy as np
 import subprocess
 
-from scipy.misc import imresize
+from skimage.transform import resize
+from PIL import Image
 import cv2
 import pydicom
-from skimage.color import rgb2gray
 
 from usal_echo.d00_utils.db_utils import dbReadWriteViews
 from usal_echo.d00_utils.s3_utils import download_s3_objects
@@ -18,13 +18,7 @@ from usal_echo.d00_utils.log_utils import setup_logging
 logger = setup_logging(__name__, __name__)
 
 
-def _ybr2gray(y, u, v):
-    r = y + 1.402 * (v - 128)
-    g = y - 0.34414 * (u - 128) - 0.71414 * (v - 128)
-    b = y + 1.772 * (u - 128)
-    gray = 0.2989 * r + 0.5870 * g + 0.1140 * b
 
-    return np.array(gray, dtype="int8")
 
 
 def decompress_dcm(dcm_filepath, dcmraw_filepath):
@@ -60,7 +54,7 @@ def _split_train_test(ratio, table_name):
     df = io_views.get_table(table_name)
 
     np.random.seed(0)
-    msk = np.random.rand(len(df)) < ratio
+    msk = np.random.rand(len(df)) > ratio
     df_train = df[msk].reset_index(drop=True)
     df_test = df[~msk].reset_index(drop=True)
 
@@ -110,7 +104,7 @@ def s3_download_decomp_dcm(
     :param downsample_ratio (float): percentage by which to downsample dataset
                          e.g. if ratio=0.1, will downsample by a factor of 10
     :param train_test_ratio (float): ratio for splitting into train/test
-    :param table_name (str): name of views.table with master instancest
+    :param table_name (str): name of views.table with master instances
     :param train (bool): download train set instead of test set, default=False
     
     """
@@ -192,46 +186,18 @@ def _dcmraw_to_np(dcmraw_obj):
 
     if len(pxl_array.shape) == 4:  # format 3, nframes, nrow, ncol
         nframes = pxl_array.shape[1]
-        maxframes = nframes * 3
     elif len(pxl_array.shape) == 3:  # format nframes, nrow, ncol
         nframes = pxl_array.shape[0]
-        maxframes = nframes * 1
 
     nrow = int(dcmraw_obj.Rows)
     ncol = int(dcmraw_obj.Columns)
     ArrayDicom = np.zeros((nrow, ncol), dtype=pxl_array.dtype)
     framedict = {}
-
-    for counter in range(0, maxframes, 3):  # iterate through all subframes
-        k = counter % nframes
-        j = (counter) // nframes
-        m = (counter + 1) % nframes
-        l = (counter + 1) // nframes
-        o = (counter + 2) % nframes
-        n = (counter + 2) // nframes
-
-        if len(pxl_array.shape) == 4:
-            a = pxl_array[j, k, :, :]
-            b = pxl_array[l, m, :, :]
-            c = pxl_array[n, o, :, :]
-            ArrayDicom[:, :] = _ybr2gray(a, b, c)
-            ArrayDicom[0 : int(nrow / 10), 0 : int(ncol)] = 0  # blanks out name
-            counter = counter + 1
-            ArrayDicom.clip(0)
-            nrowout = nrow
-            ncolout = ncol
-            x = int(counter / 3)
-            framedict[x] = imresize(ArrayDicom, (nrowout, ncolout))
-        elif len(pxl_array.shape) == 3:
-            ArrayDicom[:, :] = pxl_array[counter, :, :]
-            ArrayDicom[0 : int(nrow / 10), 0 : int(ncol)] = 0  # blanks out name
-            counter = counter + 1
-            ArrayDicom.clip(0)
-            nrowout = nrow
-            ncolout = ncol
-            x = int(counter / 3)
-            framedict[x] = imresize(ArrayDicom, (nrowout, ncolout))
-
+    
+    for i in range(nframes):
+        ArrayDicom[:, :] = pxl_array[0, i, :, :].copy()
+        ArrayDicom[0 : int(nrow / 10), 0 : int(ncol)] = 0
+        framedict[i] = np.resize(ArrayDicom, (nrow,ncol))
     return framedict
 
 
@@ -332,8 +298,9 @@ def dcm_to_segmentation_arrays(dcm_dir, filename):
 
         for key in list(framedict.keys()):
             image = np.zeros((384, 384))
-            image[:, :] = imresize(rgb2gray(framedict[key]), (384, 384, 1))
-            images.append(image)
+            image[:, :] = resize(framedict[key], (384, 384), anti_aliasing=True)
+            image = 255 * image
+            images.append(image.astype(np.uint8))
             orig_images.append(framedict[key])
 
         images = np.array(images).reshape((len(images), 384, 384, 1))
