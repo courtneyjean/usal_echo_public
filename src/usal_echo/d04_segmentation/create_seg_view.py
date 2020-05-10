@@ -6,10 +6,13 @@ Created on Fri Jul 12 09:26:54 2019
 
 @author: court
 """
+from usal_echo.d00_utils.log_utils import setup_logging
 from usal_echo.d00_utils.db_utils import dbReadWriteClean, dbReadWriteViews
 from usal_echo.d04_segmentation.segment_utils import *
 
 import pandas as pd
+
+logger = setup_logging(__name__, __name__)
 
 
 def create_seg_view():
@@ -191,3 +194,53 @@ def create_seg_view():
     del a_modvolume_df
 
     io_views.save_to_db(df_9, "chords_by_volume_mask")
+    
+    # create studies_w_segmentation_labels table
+    df_10 = df_9.groupby(
+        ["studyidk", "instanceidk", "indexinmglist"]).agg(
+        {
+            "x1coordinate": list,
+            "y1coordinate": list,
+            "x2coordinate": list,
+            "y2coordinate": list,
+            "chamber": pd.Series.unique,
+            "frame": pd.Series.unique,
+            "view": pd.Series.unique,
+            "instancefilename": pd.Series.unique,
+        }
+    )
+    df_10 = df_10.reset_index()
+    df_11 = df_10[df_10['chamber'] != ""]
+        
+    #get unique study ids
+    df_12 = pd.DataFrame(df_11['studyidk'].unique())
+    df_12.columns = ['studyidk']
+    io_views.save_to_db(df_12, "studies_w_segmentation_labels")
+    
+    #get study id that have a pair of segmentation masks (lv and la) on the same frame
+    
+    gt_LA = df_11[df_11['chamber'] == 'la']
+    gt_LV = df_11[df_11['chamber'] == 'lv']
+    
+    logger.info('gt_LA Shape : {} rows {} columns'.format(gt_LA.shape[0], gt_LA.shape[1]))
+    logger.info('gt_LV Shape : {} rows {} columns'.format(gt_LV.shape[0], gt_LV.shape[1]))
+    
+    #inner join only includes rows where there is a match on the stated columns
+    gt_lv_la_pairs = pd.merge(gt_LA, gt_LV, how='inner', on=['studyidk', 'instanceidk', 'instancefilename', 
+                                                             'frame', 'view'])
+    
+    gt_lv_la_pairs = gt_lv_la_pairs.rename(columns={'ground_truth_id_x':'ground_truth_id_la',
+                                   'chamber_x':'chamber_la',
+                                   'numpy_array_x':'numpy_array_la',
+                                   'ground_truth_id_y':'ground_truth_id_lv',
+                                   'chamber_y':'chamber_lv',
+                                   'numpy_array_y':'numpy_array_lv'})
+    
+    instances_w_lv_la_segmentation_pairs = gt_lv_la_pairs[['studyidk']].copy()  
+    instances_w_lv_la_segmentation_pairs = instances_w_lv_la_segmentation_pairs.drop_duplicates()  
+        
+    logger.info('instances_w_lv_la_segmentation_pairs, shape: {}'.format(instances_w_lv_la_segmentation_pairs.shape))
+    logger.info('instances_w_lv_la_segmentation_pairs format is {}'.format(",".join(instances_w_lv_la_segmentation_pairs.columns)))
+    
+    io_views.save_to_db(instances_w_lv_la_segmentation_pairs, "instances_w_lv_la_segmentation_pairs")
+
