@@ -40,7 +40,6 @@ def evaluate_masks(dcm_dir_path):
                 filenames.append(str(fullfilename).split(".")[0].split("_")[-1])
 
     logger.info("Number of files in the directory: {}".format(len(file_path)))
-    logger.info("example filename: {}".format(filenames[1]))
 
     io_segmentation = dbReadWriteSegmentation()
     ground_truths = io_segmentation.get_segmentation_table("ground_truths")
@@ -64,14 +63,10 @@ def evaluate_masks(dcm_dir_path):
         gt_frame_no = gt["frame"]
         gt_file_name = gt["file_name"]
         
-        #get voxel spacing for the gt image
-        logger.info('filename im looking for: {}'.format(gt['file_name']))
-        logger.info('format of filenames in voxel_spacing_df: {}'.format(voxel_spacing_df.index[0]))
         
         #take the min of x or y scale spacing (appear to be the same for all files)
         try:
             voxel_spacing = float(voxel_spacing_df.loc[gt['file_name']]['value'])
-            logger.info('what the voxel_spacing looks like {}'.format(voxel_spacing))
         except TypeError:
             logger.info('voxel spacing can not be converted to a float')
             voxel_spacing = 0.013
@@ -200,5 +195,4 @@ def get_voxel_spacing_for_instances(df):
     df_dcm["tag1"] = df_dcm["tag1"].astype(str)  # consistency with tag2
     voxel_spacing_df = df_dcm.loc[(df_dcm["tag1"] == "18") & (df_dcm["tag2"] == "602c")] #just return x spacing
     
-    logger.info('voxel spacing table obtained with {} rows'.format(voxel_spacing_df.shape))
     return voxel_spacing_df   

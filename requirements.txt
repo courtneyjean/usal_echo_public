@@ -10,3 +10,4 @@ black>=19.3b0
 shapely>=1.6
 pyinquirer>=1.0
 tqdm>=4.34
+medpy>=0.4.0
