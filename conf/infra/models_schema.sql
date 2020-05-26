@@ -164,6 +164,9 @@ create table segmentation.predictions(
    output_image_seg varchar,
    output_image_orig varchar,
    output_image_overlay varchar,
+   min_pixel_intensity float,
+   max_pixel_intensity float,
+   np_prediction_total float,
    primary key(prediction_id)
 );
 
@@ -182,6 +185,8 @@ create table segmentation.evaluations(
     score_value float,
     gt_view_name varchar,
     pred_view_name varchar,
+    dataset varchar,
+    seg_model varchar,
     primary key(evaluation_id)
 );
 
