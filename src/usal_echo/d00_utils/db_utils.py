@@ -183,10 +183,15 @@ class dbReadWriteSegmentation(dbReadWriteData):
             self.engine.execute(CreateSchema(self.schema))
 
     def save_prediction_numpy_array_to_db(self, binary_data_array, column_names):
-        # Columns names are:prediction_id	study_id	instance_id	file_name
-        # num_frames	model_name	date_run	output_np_lv	output_np_la
-        # output_np_lvo	output_image_seg	output_image_orig	output_image_overlay
-        sql = "insert into {}.{} ({}) values ('{}', '{}', '{}', '{}', '{}', '{}', {}, {}, {}, '{}', '{}', '{}')".format(
+        # Columns names are:
+        # prediction_id serial, study_id integer, instance_id integer, file_name varchar,
+        # num_frames integer, model_name varchar, date_run timestamp with time zone,
+        # output_np_lv bytea, output_np_la bytea, output_np_lvo bytea, output_image_seg varchar,
+        # output_image_orig varchar, output_image_overlay varchar, min_pixel_intensity float,
+        # max_pixel_intensity float, np_prediction_total float
+        
+        
+        sql = "insert into {}.{} ({}) values ('{}', '{}', '{}', '{}', '{}', '{}', {}, {}, {}, '{}', '{}', '{}', '{}', '{}', '{}')".format(
             self.schema,
             "predictions",
             ",".join(column_names),
@@ -202,6 +207,9 @@ class dbReadWriteSegmentation(dbReadWriteData):
             binary_data_array[9],
             binary_data_array[10],
             binary_data_array[11],
+            binary_data_array[12],
+            binary_data_array[13],
+            binary_data_array[14]
         )
         self.cursor.execute(sql)
         self.raw_conn.commit()
@@ -266,7 +274,7 @@ class dbReadWriteSegmentation(dbReadWriteData):
 
         # Create new database table from empty dataframe
         # df.to_sql('evaluation', self.engine, self.schema, if_exists, index=False)
-        sql = "insert into {}.{} ({}) values ('{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}')".format(
+        sql = "insert into {}.{} ({}) values ('{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}', '{}')".format(
             self.schema,
             "evaluations",
             ",".join(column_names),
@@ -278,6 +286,9 @@ class dbReadWriteSegmentation(dbReadWriteData):
             df[5],
             df[6],
             df[7],
+            df[8],
+            df[9],
+            df[10]
         )
         self.cursor.execute(sql)
         self.raw_conn.commit()
